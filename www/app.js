@@ -16,7 +16,7 @@ const write=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));re
 const money=n=>new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(n)||0);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let products=read("kopikasir_products",DEFAULT_PRODUCTS),cart={},category="Semua",method="Tunai",transactions=read("kopikasir_transactions",[]),editingId=null,lastTransaction=null;
-if(!Array.isArray(products)||!products.length)products=DEFAULT_PRODUCTS.map(p=>({...p}));
+if(!Array.isArray(products))products=DEFAULT_PRODUCTS.map(p=>({...p}));
 if(!Array.isArray(transactions))transactions=[];
 const saveProducts=()=>write("kopikasir_products",products);
 const saveTransactions=()=>write("kopikasir_transactions",transactions);
