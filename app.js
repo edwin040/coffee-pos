@@ -57,3 +57,31 @@ $("productForm").addEventListener("submit",e=>{e.preventDefault();const name=$("
 $("todayLabel").textContent=new Date().toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"}).toUpperCase();
 renderCategories();renderProducts();renderCart();updateStats();
 if("serviceWorker"in navigator&&location.protocol.startsWith("http"))window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+
+
+/* Theme preference is saved independently from POS product and sales data. */
+(function(){
+ const key="kopikasir_theme";
+ const button=document.getElementById("themeToggle");
+ const meta=document.querySelector('meta[name="theme-color"]');
+ function applyTheme(theme){
+  const selected=theme==="dark"?"dark":"light";
+  document.documentElement.dataset.theme=selected;
+  if(meta)meta.setAttribute("content",selected==="dark"?"#151412":"#f7f5f0");
+  if(button){
+   button.textContent=selected==="dark"?"☀":"☾";
+   button.setAttribute("aria-label",selected==="dark"?"Aktifkan tema terang":"Aktifkan tema gelap");
+   button.setAttribute("aria-pressed",String(selected==="dark"));
+   button.title=selected==="dark"?"Tema terang":"Tema gelap";
+  }
+ }
+ let saved="light";
+ try{saved=localStorage.getItem(key)||"light"}catch(e){}
+ applyTheme(saved);
+ if(button)button.addEventListener("click",()=>{
+  const next=document.documentElement.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem(key,next)}catch(e){}
+  applyTheme(next);
+  toast(next==="dark"?"Tema gelap diaktifkan":"Tema terang diaktifkan");
+ });
+})();
