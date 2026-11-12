@@ -41,6 +41,22 @@ jobs:
       - name: Sync web app into Android
         run: npx cap sync android
 
+      - name: Lock app orientation to portrait
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          android_ns = "http://schemas.android.com/apk/res/android"
+          ET.register_namespace("android", android_ns)
+          tree = ET.parse(manifest)
+          for activity in tree.getroot().findall(".//activity"):
+              if activity.get(f"{{{android_ns}}}name") == ".MainActivity":
+                  activity.set(f"{{{android_ns}}}screenOrientation", "portrait")
+          tree.write(manifest, encoding="utf-8", xml_declaration=True)
+          PY
+
       - name: Build debug APK
         working-directory: android
         run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
