@@ -1,0 +1,11 @@
+{
+  "appId": "id.edwin040.kopikasir",
+  "appName": "KopiKasir",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
