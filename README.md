@@ -1,33 +1,52 @@
 # KopiKasir — Coffee Shop POS
 
-Aplikasi kasir coffee shop **mobile-first** untuk Android. Dibangun dengan HTML, CSS, dan JavaScript vanilla agar ringan, mudah dikembangkan, dan dapat dipasang sebagai PWA.
+Aplikasi kasir coffee shop **mobile-first** untuk Android. Antarmuka dibuat dengan HTML, CSS, dan JavaScript, lalu dibungkus menjadi aplikasi Android menggunakan Capacitor.
 
-## Fitur tahap awal
+## Build APK otomatis
+
+Setiap perubahan pada konfigurasi Android atau folder `www/` di branch `main` akan menjalankan GitHub Actions untuk membangun APK debug.
+
+1. Buka tab **Actions** di repository GitHub.
+2. Pilih workflow **Build KopiKasir APK**.
+3. Tunggu sampai status workflow **Success**.
+4. Buka hasil run dan unduh artifact **KopiKasir-Android-APK**.
+5. Ekstrak ZIP, lalu pasang file `app-debug.apk` di perangkat Android.
+
+Workflow juga dapat dijalankan manual melalui **Actions → Build KopiKasir APK → Run workflow**.
+
+## Fitur kasir tahap awal
 - Layar kasir portrait: pencarian menu, kategori, katalog produk.
 - Keranjang: tambah/kurangi kuantitas dan hitung total otomatis.
 - Pembayaran: tunai, QRIS, dan transfer. QRIS/transfer saat ini dicatat manual, belum terhubung payment gateway.
-- Struk transaksi yang bisa dicetak/disimpan sebagai PDF melalui dialog cetak browser.
+- Struk transaksi yang bisa dicetak/disimpan melalui dialog cetak yang didukung perangkat.
 - Riwayat transaksi dan ringkasan penjualan hari ini.
-- Penyimpanan transaksi di localStorage perangkat dan cache dasar untuk penggunaan offline setelah kunjungan pertama.
+- Penyimpanan transaksi di localStorage perangkat.
 
-## Menjalankan
-1. Aktifkan GitHub Pages pada repository ini (Settings → Pages → Deploy from a branch → main → /(root)).
-2. Buka alamat Pages melalui Chrome Android.
-3. Pilih **Tambahkan ke layar utama / Install app** dari menu browser.
+## Menjalankan versi web
 
-> Catatan: data saat ini tersimpan di browser/perangkat yang digunakan. Menghapus data browser dapat menghapus riwayat. Belum ada sinkronisasi multi-perangkat, backend, akun, stok bahan, atau integrasi printer/POS.
+Aktifkan GitHub Pages pada repository ini (Settings → Pages → Deploy from a branch → main → /(root)), lalu buka alamat Pages melalui browser.
+
+## Build lokal Android
+
+```bash
+npm install
+npx cap add android
+npx cap sync android
+cd android
+./gradlew assembleDebug
+```
+
+APK debug akan berada di `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Struktur
-- `index.html` — struktur antarmuka.
-- `styles.css` — tampilan mobile.
-- `app.js` — logika kasir dan penyimpanan.
-- `manifest.webmanifest`, `sw.js`, `icon.svg` — dukungan PWA.
+- `index.html`, `styles.css`, `app.js` — versi web.
+- `www/` — salinan aset web yang dibundel ke aplikasi Android.
+- `package.json`, `capacitor.config.json` — konfigurasi Capacitor.
+- `.github/workflows/build-apk.yml` — build APK otomatis di GitHub Actions.
 
-## Rencana pengembangan
-1. Fondasi kasir dan transaksi (tahap awal).
-2. Kelola produk/kategori dan pengaturan toko.
-3. Stok bahan baku dan resep.
-4. Laporan harian, mingguan, bulanan, serta pembukuan.
-5. Backup/sinkronisasi cloud, autentikasi, dan hardening produksi.
+## Catatan
+- Versi Android menyimpan transaksi secara lokal pada perangkat. Belum ada sinkronisasi cloud, backend, login, stok bahan, atau integrasi printer/payment gateway.
+- Folder `www/` adalah sumber aset Android; bila mengubah antarmuka, perubahan perlu disalin ke folder tersebut agar APK berikutnya ikut diperbarui.
+- Artifact APK dari workflow debug tersedia selama 30 hari.
 
 Mata uang: Rupiah (IDR).
