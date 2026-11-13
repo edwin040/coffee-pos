@@ -62,36 +62,8 @@ async function writeDeviceFile(fs,options){
  if(options.encoding==="base64"&&check.data.replace(/=+$/,"")!==options.data.replace(/=+$/,""))throw new Error("Isi foto berbeda setelah ditulis: "+options.path);
  return info;
 }
-async function saveDeviceBackup(showMessage=false){
- const fs=getDeviceFilesystem();
- const payload=validateBackupData({app:"KopiKasir",version:5,createdAt:new Date().toISOString(),products,transactions,expenses});
- const json=JSON.stringify(payload,null,2);
- const photoCount=countBackupPhotos(payload);
- const targets=fs?[{directory:"DOCUMENTS",root:"KopiKasir"},{directory:"DATA",root:"KopiKasir"}]:[];
- let savedTargets=0,lastError=null;
- for(const target of targets){
-  try{
-   const path=target.root+"/data/backup.json";
-   await writeDeviceFile(fs,{directory:target.directory,path,data:json});
-   const verify=await fs.readFile({directory:target.directory,path});
-   const verified=validateBackupData(JSON.parse(verify.data));
-   if(verified.products.length!==products.length||verified.transactions.length!==transactions.length||verified.expenses.length!==expenses.length)throw new Error("Jumlah data cadangan tidak cocok");
-   if(countBackupPhotos(verified)!==photoCount)throw new Error("Foto tidak lengkap di JSON cadangan");
-   if(verify.data!==json)throw new Error("Isi JSON berubah setelah ditulis");
-   savedTargets++;
-  }catch(error){lastError=error;console.warn("KopiKasir backup gagal:",target.directory,error)}
- }
- if(showMessage){
-  if(savedTargets)toast("Cadangan terverifikasi di "+savedTargets+" lokasi · "+photoCount+" foto tertanam · "+Math.ceil(json.length/1024)+" KB JSON");
-  else toast("Cadangan folder belum berhasil diverifikasi. Gunakan tombol Cadangkan untuk mengekspor JSON.");
- }
- if(!savedTargets&&lastError)console.warn("Backup tidak tersimpan:",lastError);
- return savedTargets>0;
-}
-function scheduleDeviceBackup(){
- if(deviceBackupTimer)clearTimeout(deviceBackupTimer);
- deviceBackupTimer=setTimeout(()=>saveDeviceBackup(false),900);
-}
+async function saveDeviceBackup(){return false;}
+function scheduleDeviceBackup(){}
 const saveProducts=()=>{const ok=write("kopikasir_products",products);if(ok)scheduleDeviceBackup();return ok};
 const saveTransactions=()=>{const ok=write("kopikasir_transactions",transactions);if(ok)scheduleDeviceBackup();return ok};
 const count=()=>Object.values(cart).reduce((a,b)=>a+b,0);
@@ -191,30 +163,7 @@ if("serviceWorker"in navigator&&location.protocol.startsWith("http"))window.addE
 /* Pembukuan: HPP, biaya operasional, analisa dan ekspor CSV. */
 const expenseKey="kopikasir_expenses";let expenses=read(expenseKey,[]);if(!Array.isArray(expenses))expenses=[];
 const saveExpenses=()=>{const ok=write(expenseKey,expenses);if(ok)scheduleDeviceBackup();return ok},isoToday=()=>new Date().toISOString().slice(0,10);
-async function restoreDeviceBackupOnFreshInstall(){
- const keys=["kopikasir_products","kopikasir_transactions",expenseKey];
- let hasLocal=false;
- try{hasLocal=keys.some(key=>localStorage.getItem(key)!==null)}catch(e){return false}
- if(hasLocal)return false;
- const fs=getDeviceFilesystem();
- if(!fs)return false;
- for(const directory of ["DOCUMENTS","DATA","EXTERNAL"]){
-  try{
-   const result=await fs.readFile({directory,path:"KopiKasir/data/backup.json"});
-   const data=validateBackupData(JSON.parse(result.data));
-   if(!data.products.length&&!data.transactions.length&&!data.expenses.length)continue;
-   const ok1=write("kopikasir_products",data.products);
-   const ok2=write("kopikasir_transactions",data.transactions);
-   const ok3=write(expenseKey,data.expenses);
-   if(!ok1||!ok2||!ok3){toast("Cadangan ditemukan, tetapi penyimpanan perangkat tidak cukup. Gunakan Pulihkan data.");return false}
-   products=data.products;transactions=data.transactions;expenses=data.expenses;
-   renderCategories();renderProducts();renderCart();updateStats();renderHistory();renderManage();renderAccounting();
-   toast("Cadangan berhasil dipulihkan: "+products.length+" produk, "+transactions.length+" transaksi, "+countBackupPhotos(data)+" foto");
-   return true;
-  }catch(error){console.warn("Cadangan KopiKasir tidak valid/tidak terbaca dari",directory,error)}
- }
- return false;
-}
+async function restoreDeviceBackupOnFreshInstall(){return false;}
 
 function reportTransactions(){const m=$("reportRange").value,n=new Date();return transactions.filter(t=>{const d=new Date(t.date);if(Number.isNaN(d.getTime()))return false;if(m==="today")return d.toDateString()===n.toDateString();if(m==="month")return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();if(m==="7"||m==="30")return d>=new Date(n.getTime()-Number(m)*86400000);return true})}
 function reportExpenses(){const m=$("reportRange").value,n=new Date();return expenses.filter(x=>{const d=new Date((x.date||"")+"T12:00:00");if(m==="today")return d.toDateString()===n.toDateString();if(m==="month")return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();if(m==="7"||m==="30")return d>=new Date(n.getTime()-Number(m)*86400000);return true})}
@@ -247,9 +196,45 @@ $("expenseForm").addEventListener("submit",e=>{e.preventDefault();const name=$("
 $("expenseList").addEventListener("click",e=>{const b=e.target.closest("[data-expense-delete]");if(!b)return;if(!confirm("Hapus catatan pengeluaran ini?"))return;expenses=expenses.filter(x=>String(x.id)!==String(b.dataset.expenseDelete));saveExpenses();renderAccounting();toast("Catatan pengeluaran dihapus")});
 $("exportReportBtn").addEventListener("click",()=>{const rows=[["Tanggal","Jenis","Keterangan","Metode","Jumlah","HPP","Laba sebelum biaya"],...reportTransactions().map(t=>[new Date(t.date).toLocaleString("id-ID"),"Penjualan",(t.items||[]).map(i=>i.name+" x"+i.qty).join("; "),t.method,t.total,(t.items||[]).reduce((s,i)=>s+(Number(i.cost)||0)*i.qty,0),t.total-(t.items||[]).reduce((s,i)=>s+(Number(i.cost)||0)*i.qty,0)]),...reportExpenses().map(x=>[x.date,"Pengeluaran",x.name,"",-x.amount,0,-x.amount])];const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="laporan-kopikasir-"+isoToday()+".csv";a.click();URL.revokeObjectURL(url)});
 
-$("backupBtn").addEventListener("click",async()=>{const button=$("backupBtn");button.disabled=true;try{const payload=validateBackupData({app:"KopiKasir",version:5,createdAt:new Date().toISOString(),products,transactions,expenses});const json=JSON.stringify(payload,null,2);if(!json||json.length<50)throw new Error("Isi cadangan kosong");const filename="backup-kopikasir.json";const cap=window.Capacitor;if(cap){const fs=getDeviceFilesystem();let share=null;try{share=cap.Plugins&&cap.Plugins.Share?cap.Plugins.Share:cap.registerPlugin("Share")}catch(e){}if(!fs||!share)throw new Error("Fitur berbagi file Android belum tersedia. Tutup dan buka ulang aplikasi.");try{await fs.deleteFile({path:filename,directory:"CACHE"})}catch(ignore){}const saved=await fs.writeFile({path:filename,data:json,directory:"CACHE",recursive:true});if(!saved||!saved.uri)throw new Error("File cadangan gagal dibuat");const check=await fs.readFile({path:filename,directory:"CACHE"});if(!check||check.data!==json)throw new Error("Verifikasi isi file cadangan gagal");const uri=await fs.getUri({path:filename,directory:"CACHE"});if(!uri||!uri.uri)throw new Error("Lokasi file cadangan tidak ditemukan");await share.share({title:"Cadangan KopiKasir",text:"Simpan file JSON ini ke folder Downloads atau Google Drive agar aman saat aplikasi dihapus.",files:[uri.uri],dialogTitle:"Simpan cadangan KopiKasir"});}else{const blob=new Blob([json],{type:"application/json;charset=utf-8"});if(!blob.size)throw new Error("File JSON kosong");const url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=filename;document.body.appendChild(link);link.click();setTimeout(()=>{URL.revokeObjectURL(url);link.remove()},30000);}const photos=countBackupPhotos(payload);toast("File terbaru siap dibagikan: backup-kopikasir.json · "+Math.ceil(new Blob([json]).size/1024)+" KB · "+photos+" foto. Simpan dengan nama yang sama dan pilih Ganti/Replace jika diminta.");}catch(error){console.error("Backup KopiKasir gagal:",error);toast("Cadangan gagal: "+(error.message||"coba lagi"));}finally{button.disabled=false}});
+
+/* Portable backup: foldered ZIP with CSV sales data, product JSON, image files and manifest. */
+const zenc=new TextEncoder(),zdec=new TextDecoder();
+function csvOut(rows){const q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';return "\ufeff"+rows.map(r=>r.map(q).join(",")).join("\r\n")}
+function csvIn(src){const s=String(src).replace(/^\ufeff/,"");let rows=[],r=[],v="",q=false;for(let i=0;i<s.length;i++){let c=s[i];if(q){if(c==='"'&&s[i+1]==='"'){v+='"';i++}else if(c==='"')q=false;else v+=c}else if(c==='"')q=true;else if(c===","){r.push(v);v=""}else if(c==="\n"){r.push(v);rows.push(r);r=[];v=""}else if(c!=="\r")v+=c}if(q)throw Error("CSV rusak: kutip tidak berpasangan");if(v||r.length){r.push(v);rows.push(r)}if(!rows.length)return[];const h=rows.shift();return rows.filter(x=>x.some(y=>y!=="")).map(x=>Object.fromEntries(h.map((k,i)=>[k,x[i]??""])))}
+function imgBytes(data){const p=imagePayload(data);if(!p)return null;const b=atob(p),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a}
+function crc32(a){let c=-1;for(const b of a){c^=b;for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xedb88320:0)}return(c^-1)>>>0}
+const le16=n=>[n&255,n>>>8&255],le32=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
+function zipMake(files){let locals=[],centrals=[],off=0;for(const f of files){const n=zenc.encode(f.path),d=f.bytes,c=crc32(d),l=new Uint8Array([...le32(0x04034b50),...le16(20),...le16(0x800),...le16(0),...le16(0),...le16(0),...le32(c),...le32(d.length),...le32(d.length),...le16(n.length),...le16(0),...n,...d]);locals.push(l);centrals.push(new Uint8Array([...le32(0x02014b50),...le16(20),...le16(20),...le16(0x800),...le16(0),...le16(0),...le16(0),...le32(c),...le32(d.length),...le32(d.length),...le16(n.length),...le16(0),...le16(0),...le16(0),...le16(0),...le32(0),...le32(off),...n]));off+=l.length}const cs=centrals.reduce((a,b)=>a+b.length,0),e=new Uint8Array([...le32(0x06054b50),...le16(0),...le16(0),...le16(files.length),...le16(files.length),...le32(cs),...le32(off),...le16(0)]),out=new Uint8Array(off+cs+e.length);let p=0;for(const x of [...locals,...centrals,e]){out.set(x,p);p+=x.length}return out}
+function zipRead(a){const v=new DataView(a.buffer,a.byteOffset,a.byteLength),out={};let p=0;while(p+30<=a.length&&v.getUint32(p,true)===0x04034b50){const method=v.getUint16(p+8,true),size=v.getUint32(p+18,true),nl=v.getUint16(p+26,true),el=v.getUint16(p+28,true),name=zdec.decode(a.subarray(p+30,p+30+nl)),at=p+30+nl+el;if(name.startsWith("/")||name.split("/").includes(".."))throw Error("Jalur ZIP tidak aman");if(method!==0)throw Error("ZIP memakai kompresi yang belum didukung");if(at+size>a.length)throw Error("Arsip ZIP terpotong");if(!name.endsWith("/")){const d=a.slice(at,at+size);if(crc32(d)!==v.getUint32(p+14,true))throw Error("Pemeriksaan integritas gagal: "+name);out[name]=d}p=at+size}if(!out["manifest.json"])throw Error("manifest.json tidak ditemukan");return out}
+const zipText=(p,t)=>({path:p,bytes:zenc.encode(t)});
+function zipDataUrl(a,mime){let b="";for(let i=0;i<a.length;i+=0x8000)b+=String.fromCharCode(...a.subarray(i,i+0x8000));return "data:"+(mime||"image/jpeg")+";base64,"+btoa(b)}
+function buildBackupZip(){
+ const files=[],ps=products.map((p,i)=>{const x={...p};if(x.image){const path="foto-produk/produk-"+String(p.id).replace(/[^a-z0-9_-]/gi,"_")+"-"+i+".jpg";files.push({path,bytes:imgBytes(x.image)});x.imagePath=path;delete x.image}return x});
+ const ts=transactions.map((t,i)=>{const x={id:t.id,date:t.date,method:t.method,cash:t.cash,change:t.change,total:t.total,qrisProofPath:""};if(t.qrisProof){const path="bukti-pembayaran/bukti-"+i+".jpg";files.push({path,bytes:imgBytes(t.qrisProof)});x.qrisProofPath=path}return x});
+ const items=transactions.flatMap(t=>(t.items||[]).map((i,n)=>[t.id,n+1,i.id,i.name,i.price,i.cost??"",i.qty]));
+ const m={app:"KopiKasir",format:"kopikasir-folder-backup",schemaVersion:1,createdAt:new Date().toISOString(),files:{products:"data-penjualan/produk.json",transactions:"data-penjualan/transaksi.csv",details:"data-penjualan/detail-transaksi.csv",expenses:"data-penjualan/pengeluaran.csv"},counts:{products:ps.length,transactions:ts.length,transactionItems:items.length,expenses:expenses.length,productPhotos:ps.filter(x=>x.imagePath).length,paymentProofs:ts.filter(x=>x.qrisProofPath).length}};
+ files.push(zipText("manifest.json",JSON.stringify(m,null,2)),zipText(m.files.products,JSON.stringify(ps,null,2)),zipText(m.files.transactions,csvOut([["id","date","method","cash","change","total","qrisProofPath"],...ts.map(x=>[x.id,x.date,x.method,x.cash,x.change,x.total,x.qrisProofPath])])),zipText(m.files.details,csvOut([["transactionId","line","productId","name","price","cost","qty"],...items])),zipText(m.files.expenses,csvOut([["id","name","amount","date"],...expenses.map(x=>[x.id,x.name,x.amount,x.date])])));
+ return{bytes:zipMake(files),manifest:m}
+}
+function restoreZip(a){
+ const files=zipRead(a),txt=p=>{if(!files[p])throw Error("File tidak ada: "+p);return zdec.decode(files[p])},m=JSON.parse(txt("manifest.json"));
+ if(m.app!=="KopiKasir"||m.format!=="kopikasir-folder-backup"||m.schemaVersion!==1)throw Error("Versi manifest tidak didukung");
+ const safe=p=>{if(typeof p!=="string"||p.startsWith("/")||p.split("/").includes("..")||!files[p])throw Error("Referensi file tidak valid");return p};
+ const ps=JSON.parse(txt(safe(m.files.products))),ts=csvIn(txt(safe(m.files.transactions))),it=csvIn(txt(safe(m.files.details))),ex=csvIn(txt(safe(m.files.expenses)));
+ const restoredProducts=ps.map(p=>{const x={...p};if(x.imagePath){const path=safe(x.imagePath);x.image=zipDataUrl(files[path],path.endsWith(".png")?"image/png":path.endsWith(".webp")?"image/webp":"image/jpeg");delete x.imagePath}return x});
+ const restoredTransactions=ts.map(t=>({id:t.id,date:t.date,method:t.method,cash:Number(t.cash)||0,change:Number(t.change)||0,total:Number(t.total),qrisProof:t.qrisProofPath?zipDataUrl(files[safe(t.qrisProofPath)]):null,items:it.filter(x=>String(x.transactionId)===String(t.id)).sort((a,b)=>Number(a.line)-Number(b.line)).map(x=>({id:x.productId===""?null:Number(x.productId),name:x.name,price:Number(x.price),cost:x.cost===""?null:Number(x.cost),qty:Number(x.qty)}))}));
+ const restoredExpenses=ex.map(x=>({id:x.id,name:x.name,amount:Number(x.amount),date:x.date})),d={app:"KopiKasir",products:restoredProducts,transactions:restoredTransactions,expenses:restoredExpenses};validateBackupData(d);
+ if(restoredProducts.length!==m.counts.products||restoredTransactions.length!==m.counts.transactions||it.length!==m.counts.transactionItems||restoredExpenses.length!==m.counts.expenses)throw Error("Jumlah data tidak cocok dengan manifest");
+ if(restoredProducts.filter(x=>x.image).length!==m.counts.productPhotos||restoredTransactions.filter(x=>x.qrisProof).length!==m.counts.paymentProofs)throw Error("Ada foto atau bukti pembayaran yang hilang");
+ return d
+}
+function toB64(a){let s="";for(let i=0;i<a.length;i+=0x8000)s+=String.fromCharCode(...a.subarray(i,i+0x8000));return btoa(s)}
+async function deliverZip(bytes){const name="Backup-KopiKasir-"+new Date().toISOString().slice(0,10)+".zip",cap=window.Capacitor;if(cap){const fs=getDeviceFilesystem();let share;try{share=cap.Plugins?.Share||cap.registerPlugin("Share")}catch(e){}if(!fs||!share)throw Error("Fitur berbagi file Android tidak tersedia");const path="backup-kopikasir.zip";try{await fs.deleteFile({path,directory:"CACHE"})}catch(e){}const data=toB64(bytes);await fs.writeFile({path,data,directory:"CACHE",encoding:"base64",recursive:true});const check=await fs.readFile({path,directory:"CACHE",encoding:"base64"});if(check.data.replace(/=+$/,"")!==data.replace(/=+$/,""))throw Error("Verifikasi file ZIP gagal");const uri=await fs.getUri({path,directory:"CACHE"});await share.share({title:"Backup KopiKasir",text:"Simpan ZIP di Downloads atau Google Drive agar aman saat aplikasi dihapus.",files:[uri.uri],dialogTitle:"Simpan backup KopiKasir"})}else{const u=URL.createObjectURL(new Blob([bytes],{type:"application/zip"})),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(u);a.remove()},30000)}return name}
+async function applyBackup(d){const keys=["kopikasir_products","kopikasir_transactions",expenseKey],old=keys.map(k=>localStorage.getItem(k)),vals=[d.products,d.transactions,d.expenses].map(JSON.stringify);try{keys.forEach((k,i)=>localStorage.setItem(k,vals[i]))}catch(e){keys.forEach((k,i)=>{try{old[i]===null?localStorage.removeItem(k):localStorage.setItem(k,old[i])}catch(x){}});throw Error("Penyimpanan penuh; data sebelumnya dipertahankan bila memungkinkan")}products=d.products;transactions=d.transactions;expenses=d.expenses;renderProducts();renderCategories();renderManage();renderHistory();renderCart();updateStats();renderAccounting()}
+$("backupBtn").addEventListener("click",async()=>{const b=$("backupBtn");b.disabled=true;try{const{bytes,manifest}=buildBackupZip();await deliverZip(bytes);toast("ZIP siap · "+manifest.counts.products+" produk · "+manifest.counts.transactions+" transaksi · "+(manifest.counts.productPhotos+manifest.counts.paymentProofs)+" foto/bukti")}catch(e){console.error(e);toast("Cadangan gagal: "+(e.message||"coba lagi"))}finally{b.disabled=false}});
 $("restoreBtn").addEventListener("click",()=>$("restoreFile").click());
-$("restoreFile").addEventListener("change",e=>{const file=e.target.files&&e.target.files[0];if(!file)return;const reader=new FileReader();reader.onerror=()=>{toast("File cadangan tidak dapat dibaca");$("restoreFile").value=""};reader.onload=()=>{const keys=["kopikasir_products","kopikasir_transactions",expenseKey],before=keys.map(k=>localStorage.getItem(k));try{const d=validateBackupData(JSON.parse(reader.result));const photos=countBackupPhotos(d);if(!confirm("Pulihkan "+d.products.length+" produk, "+d.transactions.length+" transaksi, "+d.expenses.length+" pengeluaran dan "+photos+" foto? Data saat ini akan diganti. Lanjutkan?"))return;const values=[JSON.stringify(d.products),JSON.stringify(d.transactions),JSON.stringify(d.expenses)];try{keys.forEach((k,i)=>localStorage.setItem(k,values[i]))}catch(storageError){keys.forEach((k,i)=>{try{if(before[i]===null)localStorage.removeItem(k);else localStorage.setItem(k,before[i])}catch(ignore){}});throw new Error("Penyimpanan penuh; data lama dipertahankan bila memungkinkan")}products=d.products;transactions=d.transactions;expenses=d.expenses;renderProducts();renderCategories();renderManage();renderHistory();renderCart();updateStats();renderAccounting();scheduleDeviceBackup();toast("Pemulihan berhasil: "+products.length+" produk, "+transactions.length+" transaksi, "+photos+" foto")}catch(err){console.error("Pemulihan KopiKasir gagal:",err);toast("Pemulihan gagal: "+(err.message||"format cadangan tidak valid"))}finally{$("restoreFile").value=""}};reader.readAsText(file)});
+$("restoreFile").addEventListener("change",async e=>{const file=e.target.files?.[0];if(!file)return;try{const d=file.name.toLowerCase().endsWith(".json")?validateBackupData(JSON.parse(await file.text())):restoreZip(new Uint8Array(await file.arrayBuffer()));const n=countBackupPhotos(d);if(!confirm("Pulihkan "+d.products.length+" produk, "+d.transactions.length+" transaksi, "+d.expenses.length+" pengeluaran dan "+n+" foto/bukti? Data saat ini akan diganti."))return;await applyBackup(d);toast("Pemulihan berhasil: seluruh data dan foto/bukti dipulihkan")}catch(err){console.error(err);toast("Pemulihan gagal: "+(err.message||"file tidak valid"))}finally{$("restoreFile").value=""}});
+
 
 /* Pulihkan cadangan Documents otomatis saat instalasi baru, tanpa menimpa data lokal yang sudah ada. */
-setTimeout(async()=>{await restoreDeviceBackupOnFreshInstall();scheduleDeviceBackup()},1200);
+/* Portable ZIP restore is user-selected so backups stored outside app storage survive reinstall. */
