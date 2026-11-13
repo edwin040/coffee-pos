@@ -55,7 +55,7 @@ async function saveDeviceBackup(showMessage=false){
    }
    for(const transaction of transactions){
     const raw=imagePayload(transaction.qrisProof);
-    if(raw){const name="bukti-"+String(transaction.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg";await writeDeviceFile(fs,{...target,path:target.root+"/media/"+name,data:raw,encoding:"BASE64"});mediaIndex.push({type:"bukti-pembayaran",id:transaction.id,file:name})}
+    if(raw){const name="bukti-"+String(transaction.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg";await writeDeviceFile(fs,{...target,path:target.root+"/media/"+name,data:raw,encoding:"base64"});mediaIndex.push({type:"bukti-pembayaran",id:transaction.id,file:name})}
    }
    await writeDeviceFile(fs,{...target,path:target.root+"/media/index.json",data:JSON.stringify(mediaIndex,null,2)});
    successes++;
