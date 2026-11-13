@@ -18,8 +18,59 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 let products=read("kopikasir_products",DEFAULT_PRODUCTS),cart={},category="Semua",method="Tunai",transactions=read("kopikasir_transactions",[]),editingId=null,lastTransaction=null,pendingProductImage=null,pendingQrisProof=null;
 if(!Array.isArray(products))products=DEFAULT_PRODUCTS.map(p=>({...p}));
 if(!Array.isArray(transactions))transactions=[];
-const saveProducts=()=>write("kopikasir_products",products);
-const saveTransactions=()=>write("kopikasir_transactions",transactions);
+/* Persistent Android storage: private app folder + shared Documents backup. */
+let deviceBackupTimer=null;
+function getDeviceFilesystem(){
+ try{
+  const cap=window.Capacitor;
+  if(!cap)return null;
+  if(cap.Plugins&&cap.Plugins.Filesystem)return cap.Plugins.Filesystem;
+  if(typeof cap.registerPlugin==="function")return cap.registerPlugin("Filesystem");
+ }catch(e){}
+ return null;
+}
+function imagePayload(dataUrl){
+ if(typeof dataUrl!=="string"||!dataUrl.startsWith("data:"))return null;
+ const parts=dataUrl.split(",");
+ return parts.length===2?parts[1]:null;
+}
+async function writeDeviceFile(fs,path,data,encoding){
+ const options={path,data,recursive:true};
+ if(encoding)options.encoding=encoding;
+ await fs.writeFile(options);
+}
+async function saveDeviceBackup(showMessage=false){
+ const fs=getDeviceFilesystem();
+ if(!fs){if(showMessage)toast("Fitur folder Android tersedia setelah APK terbaru dipasang");return false}
+ const payload={app:"KopiKasir",version:2,createdAt:new Date().toISOString(),products,transactions,expenses};
+ const json=JSON.stringify(payload,null,2);
+ const targets=[{directory:"DOCUMENTS",root:"KopiKasir"},{directory:"EXTERNAL",root:"KopiKasir"}];
+ let successes=0;
+ for(const target of targets){
+  try{
+   await writeDeviceFile(fs,{...target,path:target.root+"/data/backup.json",data:json});
+   const mediaIndex=[];
+   for(const product of products){
+    const raw=imagePayload(product.image);
+    if(raw){const name="produk-"+String(product.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg";await writeDeviceFile(fs,{...target,path:target.root+"/media/"+name,data:raw,encoding:"BASE64"});mediaIndex.push({type:"foto-produk",id:product.id,file:name})}
+   }
+   for(const transaction of transactions){
+    const raw=imagePayload(transaction.qrisProof);
+    if(raw){const name="bukti-"+String(transaction.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg";await writeDeviceFile(fs,{...target,path:target.root+"/media/"+name,data:raw,encoding:"BASE64"});mediaIndex.push({type:"bukti-pembayaran",id:transaction.id,file:name})}
+   }
+   await writeDeviceFile(fs,{...target,path:target.root+"/media/index.json",data:JSON.stringify(mediaIndex,null,2)});
+   successes++;
+  }catch(error){console.warn("KopiKasir backup folder gagal:",target.directory,error)}
+ }
+ if(showMessage)toast(successes?"Cadangan tersimpan di folder Documents/KopiKasir dan folder aplikasi":"Gagal menulis folder. Gunakan Cadangkan semua data untuk mengunduh file.");
+ return successes>0;
+}
+function scheduleDeviceBackup(){
+ if(deviceBackupTimer)clearTimeout(deviceBackupTimer);
+ deviceBackupTimer=setTimeout(()=>saveDeviceBackup(false),900);
+}
+const saveProducts=()=>{const ok=write("kopikasir_products",products);if(ok)scheduleDeviceBackup();return ok};
+const saveTransactions=()=>{const ok=write("kopikasir_transactions",transactions);if(ok)scheduleDeviceBackup();return ok};
 const count=()=>Object.values(cart).reduce((a,b)=>a+b,0);
 const total=()=>Object.entries(cart).reduce((s,[id,q])=>s+(products.find(p=>p.id===+id)?.price||0)*q,0);
 function open(id){$(id).classList.add("show");$(id).setAttribute("aria-hidden","false")}
@@ -66,6 +117,7 @@ $("removeProductImage").addEventListener("click",()=>{pendingProductImage=null;$
 $("productForm").addEventListener("submit",e=>{e.preventDefault();const name=$("productName").value.trim(),cat=$("productCategory").value.trim(),price=Number($("productPrice").value),cost=$("productCost").value===""?null:Math.max(0,Number($("productCost").value)||0),desc=$("productDesc").value.trim();if(!name||!cat||!Number.isFinite(price)||price<1){toast("Periksa nama, kategori, dan harga");return}if(products.some(p=>p.name.toLowerCase()===name.toLowerCase()&&p.id!==editingId)){toast("Nama produk sudah digunakan");return}if(editingId!==null){products=products.map(p=>p.id===editingId?{...p,name,category:cat,price,cost,image:pendingProductImage,desc}:p)}else{products.push({id:Date.now(),name,category:cat,price,cost,image:pendingProductImage,desc,art:""})}const wasEditing=editingId!==null;if(!saveProducts())return;resetProductForm();renderManage();renderProducts();renderCategories();renderCart();toast(wasEditing?"Produk diperbarui":"Produk ditambahkan")});
 $("todayLabel").textContent=new Date().toLocaleDateString("id-ID",{weekday:"long",day:"numeric",month:"long"}).toUpperCase();
 renderCategories();renderProducts();renderCart();updateStats();
+scheduleDeviceBackup();
 if("serviceWorker"in navigator&&location.protocol.startsWith("http"))window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 
 
@@ -98,7 +150,7 @@ if("serviceWorker"in navigator&&location.protocol.startsWith("http"))window.addE
 
 /* Pembukuan: HPP, biaya operasional, analisa dan ekspor CSV. */
 const expenseKey="kopikasir_expenses";let expenses=read(expenseKey,[]);if(!Array.isArray(expenses))expenses=[];
-const saveExpenses=()=>write(expenseKey,expenses),isoToday=()=>new Date().toISOString().slice(0,10);
+const saveExpenses=()=>{const ok=write(expenseKey,expenses);if(ok)scheduleDeviceBackup();return ok},isoToday=()=>new Date().toISOString().slice(0,10);
 function reportTransactions(){const m=$("reportRange").value,n=new Date();return transactions.filter(t=>{const d=new Date(t.date);if(Number.isNaN(d.getTime()))return false;if(m==="today")return d.toDateString()===n.toDateString();if(m==="month")return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();if(m==="7"||m==="30")return d>=new Date(n.getTime()-Number(m)*86400000);return true})}
 function reportExpenses(){const m=$("reportRange").value,n=new Date();return expenses.filter(x=>{const d=new Date((x.date||"")+"T12:00:00");if(m==="today")return d.toDateString()===n.toDateString();if(m==="month")return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();if(m==="7"||m==="30")return d>=new Date(n.getTime()-Number(m)*86400000);return true})}
 function renderAccounting(){const ts=reportTransactions(),ex=reportExpenses(),sales=ts.reduce((a,t)=>a+(+t.total||0),0),cogs=ts.reduce((a,t)=>a+(t.items||[]).reduce((v,i)=>v+(Number(i.cost)||0)*Number(i.qty||0),0),0),known=ts.filter(t=>(t.items||[]).every(i=>i.cost!==undefined&&i.cost!==null)).length,exp=ex.reduce((a,x)=>a+(+x.amount||0),0),profit=sales-cogs-exp,methods={},best={};ts.forEach(t=>{methods[t.method]=(methods[t.method]||0)+(+t.total||0);(t.items||[]).forEach(i=>best[i.name]=(best[i.name]||0)+(+i.qty||0))});const rows=Object.entries(best).sort((a,b)=>b[1]-a[1]).slice(0,5);$("accountingReport").innerHTML='<div class="accounting-cards"><article><small>Omzet</small><strong>'+money(sales)+'</strong></article><article><small>HPP / modal terjual</small><strong>'+money(cogs)+'</strong></article><article><small>Biaya operasional</small><strong>'+money(exp)+'</strong></article><article class="profit-card"><small>Estimasi laba bersih</small><strong>'+money(profit)+'</strong></article></div><div class="report-note">'+ts.length+' transaksi · '+ex.length+' catatan biaya · HPP tercatat '+known+'/'+ts.length+' transaksi</div><section class="report-section"><h3>Rincian pemasukan</h3><div class="report-line"><span>Total penjualan</span><b>'+money(sales)+'</b></div><div class="report-line"><span>HPP produk</span><b>− '+money(cogs)+'</b></div><div class="report-line"><span>Pengeluaran operasional</span><b>− '+money(exp)+'</b></div><div class="report-line report-total"><span>Estimasi laba bersih</span><b>'+money(profit)+'</b></div></section><section class="report-section"><h3>Metode pembayaran</h3>'+Object.entries(methods).map(([k,v])=>'<div class="report-line"><span>'+esc(k)+'</span><b>'+money(v)+'</b></div>').join("")+'<div class="report-line"><span>Jumlah transaksi</span><b>'+ts.length+'</b></div></section><section class="report-section"><h3>Produk terlaris</h3>'+(rows.length?rows.map(([n,q],i)=>'<div class="report-line"><span>'+(i+1)+'. '+esc(n)+'</span><b>'+q+' terjual</b></div>').join(""):'<p class="muted">Belum ada data penjualan.</p>')+'</section>'+(known<ts.length?'<p class="accounting-warning">'+(ts.length-known)+' transaksi lama atau transaksi tanpa modal belum memiliki catatan HPP. Isi modal produk untuk transaksi berikutnya agar laba lebih akurat.</p>':'');$("expenseList").innerHTML=ex.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(x=>'<article class="manage-item"><div class="manage-info"><b>'+esc(x.name)+'</b><small>'+esc(x.date)+'</small></div><strong>'+money(x.amount)+'</strong><button class="danger-btn" data-expense-delete="'+esc(x.id)+'">Hapus</button></article>').join("")||'<p class="muted">Belum ada pengeluaran pada periode ini.</p>'}
@@ -108,6 +160,6 @@ $("expenseForm").addEventListener("submit",e=>{e.preventDefault();const name=$("
 $("expenseList").addEventListener("click",e=>{const b=e.target.closest("[data-expense-delete]");if(!b)return;if(!confirm("Hapus catatan pengeluaran ini?"))return;expenses=expenses.filter(x=>String(x.id)!==String(b.dataset.expenseDelete));saveExpenses();renderAccounting();toast("Catatan pengeluaran dihapus")});
 $("exportReportBtn").addEventListener("click",()=>{const rows=[["Tanggal","Jenis","Keterangan","Metode","Jumlah","HPP","Laba sebelum biaya"],...reportTransactions().map(t=>[new Date(t.date).toLocaleString("id-ID"),"Penjualan",(t.items||[]).map(i=>i.name+" x"+i.qty).join("; "),t.method,t.total,(t.items||[]).reduce((s,i)=>s+(Number(i.cost)||0)*i.qty,0),t.total-(t.items||[]).reduce((s,i)=>s+(Number(i.cost)||0)*i.qty,0)]),...reportExpenses().map(x=>[x.date,"Pengeluaran",x.name,"",-x.amount,0,-x.amount])];const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="laporan-kopikasir-"+isoToday()+".csv";a.click();URL.revokeObjectURL(url)});
 
-$("backupBtn").addEventListener("click",()=>{const payload={app:"KopiKasir",version:1,createdAt:new Date().toISOString(),products,transactions,expenses};const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="backup-kopikasir-"+isoToday()+".json";a.click();URL.revokeObjectURL(url);toast("Cadangan data berhasil dibuat")});
+$("backupBtn").addEventListener("click",async()=>{const saved=await saveDeviceBackup(true);const payload={app:"KopiKasir",version:2,createdAt:new Date().toISOString(),products,transactions,expenses};const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="backup-kopikasir-"+isoToday()+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);if(!saved)toast("File cadangan diunduh. Simpan di Documents/KopiKasir")});
 $("restoreBtn").addEventListener("click",()=>$("restoreFile").click());
 $("restoreFile").addEventListener("change",e=>{const file=e.target.files&&e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(reader.result);if(!d||!Array.isArray(d.products)||!Array.isArray(d.transactions)||!Array.isArray(d.expenses))throw new Error("format");if(!confirm("Pulihkan data akan mengganti produk, transaksi, dan pengeluaran di perangkat ini. Lanjutkan?"))return;products=d.products;transactions=d.transactions;expenses=d.expenses;if(!saveProducts()||!saveTransactions()||!saveExpenses())throw new Error("storage");renderProducts();renderCategories();renderManage();renderHistory();renderCart();updateStats();renderAccounting();toast("Data berhasil dipulihkan")}catch(err){toast("File cadangan tidak valid atau gagal dipulihkan")}finally{$("restoreFile").value=""}};reader.readAsText(file)});
