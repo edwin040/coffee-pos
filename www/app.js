@@ -34,9 +34,8 @@ function imagePayload(dataUrl){
  const parts=dataUrl.split(",");
  return parts.length===2?parts[1]:null;
 }
-async function writeDeviceFile(fs,path,data,encoding){
- const options={path,data,recursive:true};
- if(encoding)options.encoding=encoding;
+async function writeDeviceFile(fs,options){
+ options.recursive=true;
  await fs.writeFile(options);
 }
 async function saveDeviceBackup(showMessage=false){
@@ -52,7 +51,7 @@ async function saveDeviceBackup(showMessage=false){
    const mediaIndex=[];
    for(const product of products){
     const raw=imagePayload(product.image);
-    if(raw){const name="produk-"+String(product.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg";await writeDeviceFile(fs,{...target,path:target.root+"/media/"+name,data:raw,encoding:"BASE64"});mediaIndex.push({type:"foto-produk",id:product.id,file:name})}
+    if(raw){const name="produk-"+String(product.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg";await writeDeviceFile(fs,{...target,path:target.root+"/media/"+name,data:raw,encoding:"base64"});mediaIndex.push({type:"foto-produk",id:product.id,file:name})}
    }
    for(const transaction of transactions){
     const raw=imagePayload(transaction.qrisProof);
