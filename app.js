@@ -34,19 +34,38 @@ function imagePayload(dataUrl){
  const parts=dataUrl.split(",");
  return parts.length===2?parts[1]:null;
 }
+function validateBackupData(data){
+ if(!data||typeof data!=="object"||(data.app&&data.app!=="KopiKasir"))throw new Error("Format cadangan bukan KopiKasir");
+ if(!Array.isArray(data.products)||!Array.isArray(data.transactions)||!Array.isArray(data.expenses))throw new Error("Bagian produk, transaksi, atau pengeluaran tidak lengkap");
+ if(data.products.some(p=>!p||typeof p!=="object"||p.id===undefined||typeof p.name!=="string"))throw new Error("Data produk tidak valid");
+ if(data.transactions.some(t=>!t||typeof t!=="object"||!Array.isArray(t.items)||!Number.isFinite(Number(t.total))))throw new Error("Data transaksi tidak valid");
+ if(data.expenses.some(x=>!x||typeof x!=="object"||!Number.isFinite(Number(x.amount))))throw new Error("Data pengeluaran tidak valid");
+ const serialized=JSON.stringify(data);
+ if(!serialized||serialized.length<50)throw new Error("Isi cadangan kosong");
+ return data;
+}
+function countBackupPhotos(data){
+ let count=0;
+ for(const p of data.products||[])if(imagePayload(p.image))count++;
+ for(const t of data.transactions||[])if(imagePayload(t.qrisProof))count++;
+ return count;
+}
 async function writeDeviceFile(fs,options){
  const clean={path:options.path,directory:options.directory,data:options.data,recursive:true};
  if(options.encoding)clean.encoding=options.encoding;
  await fs.writeFile(clean);
  const info=await fs.stat({path:options.path,directory:options.directory});
  if(!info||!Number(info.size))throw new Error("File kosong setelah ditulis: "+options.path);
+ const check=await fs.readFile({path:options.path,directory:options.directory});
+ if(typeof check.data!=="string"||!check.data.length)throw new Error("File tidak bisa dibaca ulang: "+options.path);
+ if(!options.encoding&&check.data!==options.data)throw new Error("Isi file berbeda setelah ditulis: "+options.path);
+ if(options.encoding==="base64"&&check.data.replace(/=+$/,"")!==options.data.replace(/=+$/,""))throw new Error("Isi foto berbeda setelah ditulis: "+options.path);
  return info;
 }
 async function saveDeviceBackup(showMessage=false){
  const fs=getDeviceFilesystem();
- const payload={app:"KopiKasir",version:3,createdAt:new Date().toISOString(),products,transactions,expenses};
+ const payload=validateBackupData({app:"KopiKasir",version:4,createdAt:new Date().toISOString(),products,transactions,expenses});
  const json=JSON.stringify(payload,null,2);
- if(!json||json.length<50)throw new Error("Data cadangan kosong");
  const targets=fs?[{directory:"DOCUMENTS",root:"KopiKasir"},{directory:"DATA",root:"KopiKasir"}]:[];
  let savedTargets=0,lastError=null;
  const photoFiles=[];
@@ -68,14 +87,18 @@ async function saveDeviceBackup(showMessage=false){
     mediaIndex.push({file:item.name});
    }
    await writeDeviceFile(fs,{directory:target.directory,path:base+"/media/index.json",data:JSON.stringify(mediaIndex,null,2)});
+   const verify=await fs.readFile({directory:target.directory,path:base+"/data/backup.json"});
+   const verified=validateBackupData(JSON.parse(verify.data));
+   if(verified.products.length!==products.length||verified.transactions.length!==transactions.length||verified.expenses.length!==expenses.length)throw new Error("Jumlah data cadangan tidak cocok");
+   if(countBackupPhotos(verified)!==photoFiles.length)throw new Error("Foto tidak lengkap di JSON cadangan");
    savedTargets++;
   }catch(error){lastError=error;console.warn("KopiKasir backup gagal:",target.directory,error)}
  }
  if(showMessage){
-  if(savedTargets)toast("Cadangan terverifikasi: "+savedTargets+" lokasi · "+photoFiles.length+" foto · "+Math.ceil(json.length/1024)+" KB JSON");
-  else toast("Cadangan folder gagal diverifikasi. File JSON unduhan tetap disiapkan.");
+  if(savedTargets)toast("Cadangan terverifikasi di "+savedTargets+" lokasi · "+photoFiles.length+" foto tertanam · "+Math.ceil(json.length/1024)+" KB JSON");
+  else toast("Cadangan folder belum berhasil diverifikasi. File JSON unduhan tetap disiapkan.");
  }
- if(!savedTargets&&fs&&lastError)console.warn("Backup tidak tersimpan:",lastError);
+ if(!savedTargets&&lastError)console.warn("Backup tidak tersimpan:",lastError);
  return savedTargets>0;
 }
 function scheduleDeviceBackup(){
@@ -188,21 +211,20 @@ async function restoreDeviceBackupOnFreshInstall(){
  if(hasLocal)return false;
  const fs=getDeviceFilesystem();
  if(!fs)return false;
- const targets=["DATA","DOCUMENTS","EXTERNAL"];
- for(const directory of targets){
+ for(const directory of ["DOCUMENTS","DATA","EXTERNAL"]){
   try{
    const result=await fs.readFile({directory,path:"KopiKasir/data/backup.json"});
-   const data=JSON.parse(result.data);
-   if(!data||data.app!=="KopiKasir"||!Array.isArray(data.products)||!Array.isArray(data.transactions)||!Array.isArray(data.expenses))continue;
+   const data=validateBackupData(JSON.parse(result.data));
+   if(!data.products.length&&!data.transactions.length&&!data.expenses.length)continue;
    const ok1=write("kopikasir_products",data.products);
    const ok2=write("kopikasir_transactions",data.transactions);
    const ok3=write(expenseKey,data.expenses);
-   if(!ok1||!ok2||!ok3){toast("Cadangan ditemukan, tetapi ruang penyimpanan aplikasi tidak cukup. Gunakan Pulihkan data.");return false}
+   if(!ok1||!ok2||!ok3){toast("Cadangan ditemukan, tetapi penyimpanan perangkat tidak cukup. Gunakan Pulihkan data.");return false}
    products=data.products;transactions=data.transactions;expenses=data.expenses;
    renderCategories();renderProducts();renderCart();updateStats();renderHistory();renderManage();renderAccounting();
-   toast("Cadangan lama berhasil dimuat: "+products.length+" produk, "+transactions.length+" transaksi");
+   toast("Cadangan berhasil dipulihkan: "+products.length+" produk, "+transactions.length+" transaksi, "+countBackupPhotos(data)+" foto");
    return true;
-  }catch(error){console.warn("Cadangan KopiKasir tidak dapat dibaca dari",directory,error)}
+  }catch(error){console.warn("Cadangan KopiKasir tidak valid/tidak terbaca dari",directory,error)}
  }
  return false;
 }
@@ -238,9 +260,9 @@ $("expenseForm").addEventListener("submit",e=>{e.preventDefault();const name=$("
 $("expenseList").addEventListener("click",e=>{const b=e.target.closest("[data-expense-delete]");if(!b)return;if(!confirm("Hapus catatan pengeluaran ini?"))return;expenses=expenses.filter(x=>String(x.id)!==String(b.dataset.expenseDelete));saveExpenses();renderAccounting();toast("Catatan pengeluaran dihapus")});
 $("exportReportBtn").addEventListener("click",()=>{const rows=[["Tanggal","Jenis","Keterangan","Metode","Jumlah","HPP","Laba sebelum biaya"],...reportTransactions().map(t=>[new Date(t.date).toLocaleString("id-ID"),"Penjualan",(t.items||[]).map(i=>i.name+" x"+i.qty).join("; "),t.method,t.total,(t.items||[]).reduce((s,i)=>s+(Number(i.cost)||0)*i.qty,0),t.total-(t.items||[]).reduce((s,i)=>s+(Number(i.cost)||0)*i.qty,0)]),...reportExpenses().map(x=>[x.date,"Pengeluaran",x.name,"",-x.amount,0,-x.amount])];const csv=rows.map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="laporan-kopikasir-"+isoToday()+".csv";a.click();URL.revokeObjectURL(url)});
 
-$("backupBtn").addEventListener("click",async()=>{const button=$("backupBtn");button.disabled=true;try{await saveDeviceBackup(false);const payload={app:"KopiKasir",version:3,createdAt:new Date().toISOString(),products,transactions,expenses};const json=JSON.stringify(payload,null,2);if(!json||json.length<50)throw new Error("Data cadangan kosong");const blob=new Blob([json],{type:"application/json;charset=utf-8"});if(!blob.size)throw new Error("File JSON kosong");const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="backup-kopikasir-"+isoToday()+".json";a.style.display="none";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},10000);toast("File JSON disiapkan ("+Math.ceil(blob.size/1024)+" KB). Foto produk dan bukti pembayaran ikut tertanam di dalam JSON.");}catch(error){console.error("Backup KopiKasir gagal:",error);toast("Gagal membuat cadangan: "+(error.message||"coba lagi"));}finally{button.disabled=false}});
+$("backupBtn").addEventListener("click",async()=>{const button=$("backupBtn");button.disabled=true;try{const folderSaved=await saveDeviceBackup(false);const payload=validateBackupData({app:"KopiKasir",version:4,createdAt:new Date().toISOString(),products,transactions,expenses});const json=JSON.stringify(payload,null,2);const blob=new Blob([json],{type:"application/json;charset=utf-8"});if(!blob.size)throw new Error("File JSON kosong");const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="backup-kopikasir-"+isoToday()+".json";a.style.display="none";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},10000);const photos=countBackupPhotos(payload);toast("JSON siap ("+Math.ceil(blob.size/1024)+" KB), "+photos+" foto tertanam"+(folderSaved?" · salinan folder terverifikasi":" · unduh JSON dan simpan file ini"));}catch(error){console.error("Backup KopiKasir gagal:",error);toast("Gagal membuat cadangan: "+(error.message||"coba lagi"));}finally{button.disabled=false}});
 $("restoreBtn").addEventListener("click",()=>$("restoreFile").click());
-$("restoreFile").addEventListener("change",e=>{const file=e.target.files&&e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{const d=JSON.parse(reader.result);if(!d||!Array.isArray(d.products)||!Array.isArray(d.transactions)||!Array.isArray(d.expenses))throw new Error("format");if(!confirm("Pulihkan data akan mengganti produk, transaksi, dan pengeluaran di perangkat ini. Lanjutkan?"))return;products=d.products;transactions=d.transactions;expenses=d.expenses;if(!saveProducts()||!saveTransactions()||!saveExpenses())throw new Error("storage");renderProducts();renderCategories();renderManage();renderHistory();renderCart();updateStats();renderAccounting();toast("Data berhasil dipulihkan")}catch(err){toast("File cadangan tidak valid atau gagal dipulihkan")}finally{$("restoreFile").value=""}};reader.readAsText(file)});
+$("restoreFile").addEventListener("change",e=>{const file=e.target.files&&e.target.files[0];if(!file)return;const reader=new FileReader();reader.onerror=()=>{toast("File cadangan tidak dapat dibaca");$("restoreFile").value=""};reader.onload=()=>{const keys=["kopikasir_products","kopikasir_transactions",expenseKey],before=keys.map(k=>localStorage.getItem(k));try{const d=validateBackupData(JSON.parse(reader.result));const photos=countBackupPhotos(d);if(!confirm("Pulihkan "+d.products.length+" produk, "+d.transactions.length+" transaksi, "+d.expenses.length+" pengeluaran dan "+photos+" foto? Data saat ini akan diganti. Lanjutkan?"))return;const values=[JSON.stringify(d.products),JSON.stringify(d.transactions),JSON.stringify(d.expenses)];try{keys.forEach((k,i)=>localStorage.setItem(k,values[i]))}catch(storageError){keys.forEach((k,i)=>{try{if(before[i]===null)localStorage.removeItem(k);else localStorage.setItem(k,before[i])}catch(ignore){}});throw new Error("Penyimpanan penuh; data lama dipertahankan bila memungkinkan")}products=d.products;transactions=d.transactions;expenses=d.expenses;renderProducts();renderCategories();renderManage();renderHistory();renderCart();updateStats();renderAccounting();scheduleDeviceBackup();toast("Pemulihan berhasil: "+products.length+" produk, "+transactions.length+" transaksi, "+photos+" foto")}catch(err){console.error("Pemulihan KopiKasir gagal:",err);toast("Pemulihan gagal: "+(err.message||"format cadangan tidak valid"))}finally{$("restoreFile").value=""}};reader.readAsText(file)});
 
 /* Pulihkan cadangan Documents otomatis saat instalasi baru, tanpa menimpa data lokal yang sudah ada. */
 setTimeout(async()=>{await restoreDeviceBackupOnFreshInstall();scheduleDeviceBackup()},1200);
