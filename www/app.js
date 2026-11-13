@@ -64,39 +64,26 @@ async function writeDeviceFile(fs,options){
 }
 async function saveDeviceBackup(showMessage=false){
  const fs=getDeviceFilesystem();
- const payload=validateBackupData({app:"KopiKasir",version:4,createdAt:new Date().toISOString(),products,transactions,expenses});
+ const payload=validateBackupData({app:"KopiKasir",version:5,createdAt:new Date().toISOString(),products,transactions,expenses});
  const json=JSON.stringify(payload,null,2);
+ const photoCount=countBackupPhotos(payload);
  const targets=fs?[{directory:"DOCUMENTS",root:"KopiKasir"},{directory:"DATA",root:"KopiKasir"}]:[];
  let savedTargets=0,lastError=null;
- const photoFiles=[];
- for(const product of products){
-  const raw=imagePayload(product.image);
-  if(raw)photoFiles.push({name:"produk-"+String(product.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg",raw});
- }
- for(const transaction of transactions){
-  const raw=imagePayload(transaction.qrisProof);
-  if(raw)photoFiles.push({name:"bukti-"+String(transaction.id).replace(/[^a-zA-Z0-9_-]/g,"")+".jpg",raw});
- }
  for(const target of targets){
   try{
-   const base=target.root;
-   await writeDeviceFile(fs,{directory:target.directory,path:base+"/data/backup.json",data:json});
-   const mediaIndex=[];
-   for(const item of photoFiles){
-    await writeDeviceFile(fs,{directory:target.directory,path:base+"/media/"+item.name,data:item.raw,encoding:"base64"});
-    mediaIndex.push({file:item.name});
-   }
-   await writeDeviceFile(fs,{directory:target.directory,path:base+"/media/index.json",data:JSON.stringify(mediaIndex,null,2)});
-   const verify=await fs.readFile({directory:target.directory,path:base+"/data/backup.json"});
+   const path=target.root+"/data/backup.json";
+   await writeDeviceFile(fs,{directory:target.directory,path,data:json});
+   const verify=await fs.readFile({directory:target.directory,path});
    const verified=validateBackupData(JSON.parse(verify.data));
    if(verified.products.length!==products.length||verified.transactions.length!==transactions.length||verified.expenses.length!==expenses.length)throw new Error("Jumlah data cadangan tidak cocok");
-   if(countBackupPhotos(verified)!==photoFiles.length)throw new Error("Foto tidak lengkap di JSON cadangan");
+   if(countBackupPhotos(verified)!==photoCount)throw new Error("Foto tidak lengkap di JSON cadangan");
+   if(verify.data!==json)throw new Error("Isi JSON berubah setelah ditulis");
    savedTargets++;
   }catch(error){lastError=error;console.warn("KopiKasir backup gagal:",target.directory,error)}
  }
  if(showMessage){
-  if(savedTargets)toast("Cadangan terverifikasi di "+savedTargets+" lokasi · "+photoFiles.length+" foto tertanam · "+Math.ceil(json.length/1024)+" KB JSON");
-  else toast("Cadangan folder belum berhasil diverifikasi. File JSON unduhan tetap disiapkan.");
+  if(savedTargets)toast("Cadangan terverifikasi di "+savedTargets+" lokasi · "+photoCount+" foto tertanam · "+Math.ceil(json.length/1024)+" KB JSON");
+  else toast("Cadangan folder belum berhasil diverifikasi. Gunakan tombol Cadangkan untuk mengekspor JSON.");
  }
  if(!savedTargets&&lastError)console.warn("Backup tidak tersimpan:",lastError);
  return savedTargets>0;
